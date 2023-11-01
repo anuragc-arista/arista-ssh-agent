@@ -1,6 +1,6 @@
 module example.com/ssh-agent-oauth
 
-go 1.21.0
+go 1.21
 
 require golang.org/x/crypto v0.12.0
 
