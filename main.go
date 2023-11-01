@@ -51,8 +51,33 @@ func main() {
 				CAKey:  cakey,
 				User:   user,
 			}
+
+			cert, key, err := GenerateSignedCert(session.User, session.CACert, session.CAKey)
+			if err != nil {
+				slog.Error("GenerateSignedCert", "error", err)
+				return
+			}
+
+			slog.Debug("generated session cert and key", "cert", cert, "key", key)
+
+			signer, err := ssh.NewSignerFromKey(key)
+			if err != nil {
+				slog.Error("NewSignerFromKey", "error", err)
+				return
+			}
+
+			certsigner, err := ssh.NewCertSigner(cert, signer)
+			if err != nil {
+				slog.Error("NewCertSigner", "error", err)
+				return
+			}
+
+			session.Certificate = cert
+			session.Signer = certsigner
+
 			if err := handle(conn, &session); err != nil {
 				slog.Error("accept", "error", err)
+				return
 			}
 		}()
 	}

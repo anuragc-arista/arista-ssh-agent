@@ -144,7 +144,7 @@ func requestIdentities(s *Session) error {
 			return err
 		}
 
-		comment := "snaipe@arista.com"
+		comment := "jsuarez@arista.com"
 
 		writeUint32(s.Response, uint32(len(comment)))
 		if _, err := s.Response.Write([]byte(comment)); err != nil {
@@ -223,26 +223,6 @@ func bindSession(s *Session) error {
 
 	// This is where the client would normally generate and send the
 	// session certificate to a signing server
-
-	cert, key, err := GenerateSignedCert(s.User, s.CACert, s.CAKey)
-	if err != nil {
-		slog.Error("GenerateSignedCert", "error", err)
-	}
-
-	slog.Debug("generated session cert and key", "cert", cert, "key", key)
-
-	signer, err := ssh.NewSignerFromKey(key)
-	if err != nil {
-		slog.Error("NewSignerFromKey", "error", err)
-	}
-
-	certsigner, err := ssh.NewCertSigner(cert, signer)
-	if err != nil {
-		slog.Error("NewCertSigner", "error", err)
-	}
-
-	s.Certificate = cert
-	s.Signer = certsigner
 
 	writeUint8(s.Response, uint8(SSH_AGENT_SUCCESS))
 	return nil
