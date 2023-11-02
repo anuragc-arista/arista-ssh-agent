@@ -5,9 +5,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -20,48 +18,48 @@ import (
 	"golang.org/x/term"
 )
 
-func LoadCACert(pemfile, keyfile string) (*x509.Certificate, ed25519.PrivateKey, error) {
+// func LoadCACert(pemfile, keyfile string) (*x509.Certificate, ed25519.PrivateKey, error) {
 
-	pembytes, err := os.ReadFile(pemfile)
-	if err != nil {
-		return nil, nil, err
-	}
+// 	pembytes, err := os.ReadFile(pemfile)
+// 	if err != nil {
+// 		return nil, nil, err
+// 	}
 
-	pemdata, _ := pem.Decode(pembytes)
-	if pemdata == nil {
-		return nil, nil, fmt.Errorf("invalid pem file")
-	}
+// 	pemdata, _ := pem.Decode(pembytes)
+// 	if pemdata == nil {
+// 		return nil, nil, fmt.Errorf("invalid pem file")
+// 	}
 
-	if pemdata.Type != "CERTIFICATE" {
-		return nil, nil, fmt.Errorf("invalid pem file")
-	}
+// 	if pemdata.Type != "CERTIFICATE" {
+// 		return nil, nil, fmt.Errorf("invalid pem file")
+// 	}
 
-	cert, err := x509.ParseCertificate(pemdata.Bytes)
-	if err != nil {
-		return nil, nil, err
-	}
+// 	cert, err := x509.ParseCertificate(pemdata.Bytes)
+// 	if err != nil {
+// 		return nil, nil, err
+// 	}
 
-	keybytes, err := os.ReadFile(keyfile)
-	if err != nil {
-		return nil, nil, err
-	}
+// 	keybytes, err := os.ReadFile(keyfile)
+// 	if err != nil {
+// 		return nil, nil, err
+// 	}
 
-	keydata, _ := pem.Decode(keybytes)
-	if keydata == nil {
-		return nil, nil, fmt.Errorf("invalid key file")
-	}
+// 	keydata, _ := pem.Decode(keybytes)
+// 	if keydata == nil {
+// 		return nil, nil, fmt.Errorf("invalid key file")
+// 	}
 
-	if keydata.Type != "PRIVATE KEY" {
-		return nil, nil, fmt.Errorf("invalid key file")
-	}
+// 	if keydata.Type != "PRIVATE KEY" {
+// 		return nil, nil, fmt.Errorf("invalid key file")
+// 	}
 
-	key, err := x509.ParsePKCS8PrivateKey(keydata.Bytes)
-	if err != nil {
-		return nil, nil, err
-	}
+// 	key, err := x509.ParsePKCS8PrivateKey(keydata.Bytes)
+// 	if err != nil {
+// 		return nil, nil, err
+// 	}
 
-	return cert, key.(ed25519.PrivateKey), nil
-}
+// 	return cert, key.(ed25519.PrivateKey), nil
+// }
 
 func GetCredentials() (string, string) {
 	reader := bufio.NewReader(os.Stdin)

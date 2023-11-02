@@ -24,14 +24,6 @@ func main() {
 	slog.Info("Successfuly got vault token")
 	slog.Info("Starting Arista SSH Agent")
 
-	cacert, cakey, err := LoadCACert("ca.pem", "ca.key")
-	if err != nil {
-		slog.Error("LoadCACert", "error", err)
-		os.Exit(1)
-	}
-
-	slog.Debug("loaded CA cert", "cert", cacert, "key", cakey)
-
 	os.Remove("agent.sock")
 
 	socket, err := net.Listen("unix", "agent.sock")
@@ -55,9 +47,7 @@ func main() {
 			defer conn.Close()
 
 			session := Session{
-				CACert: cacert,
-				CAKey:  cakey,
-				User:   user,
+				User: user,
 			}
 
 			cert, key, err := GenerateSignedCert(session.User, token)
