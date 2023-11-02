@@ -279,16 +279,16 @@ func SignCert(sshpub ssh.PublicKey, token string) (string, error) {
 
 	tokenMemAddr := &token
 
-	// Here we check the existing token's ttl and renew if there's less that
-	// 300 sec left. We will attempt to renew before each request to sing the
-	// public key to obtain a certificate.
+	// Here we check the existing token's ttl and renew if it has less that
+	// 300 sec left but more that 60 sec. We will attempt to renew before each
+	// request to sing the public key to obtain a certificate.
 	tokenttl, err := TokenLookup(token)
 	if err != nil {
 		slog.Error("Error looking up token info", "Error:", err)
 	}
 
-	if tokenttl < 300 {
-		slog.Info("Token TLL is less that 300 sec, renew", "TTL", tokenttl)
+	if tokenttl > 60 && tokenttl < 900 {
+		slog.Info("Token needs renewal", "TTL", tokenttl)
 		renewedtoken, err := TokenRenew(token)
 		if err != nil {
 			slog.Error("Error renewing token", "Error:", err)
