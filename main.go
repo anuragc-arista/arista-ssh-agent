@@ -16,6 +16,14 @@ import (
 func main() {
 	user := os.Getenv("USER") // we should of course check the username from the UID
 
+	slog.Info("Getting initial vault token")
+	token, err := GetToken()
+	if err != nil {
+		slog.Error("Error getting token from the CA", "Error:", err)
+	}
+	slog.Info("Successfuly got vault token")
+	slog.Info("Starting Arista SSH Agent")
+
 	cacert, cakey, err := LoadCACert("ca.pem", "ca.key")
 	if err != nil {
 		slog.Error("LoadCACert", "error", err)
@@ -52,7 +60,7 @@ func main() {
 				User:   user,
 			}
 
-			cert, key, err := GenerateSignedCert(session.User, session.CACert, session.CAKey)
+			cert, key, err := GenerateSignedCert(session.User, token)
 			if err != nil {
 				slog.Error("GenerateSignedCert", "error", err)
 				return
