@@ -3,37 +3,68 @@
 This is a proof-of-concept for single-use certificate generation as part of SSH
 authentication.
 
-Do not use this implementation. I cut some corners and it is not suitable for
-production use. It was merely made to showcase an idea.
+It used Vault SSH as the CA for generating the certificates. The only supported
+auth method at the time this was written us LDAP.
+
+This implementation is not suitable for production use.
 
 ## How to use?
 
-The CA cert and key used for this PoC was pregenerated; if you'd like to
-generate new ones, run `make clean` then `make`.
+The destination host mush have the CA's publik key. You need to configure ssh to
+trust it. The key can be obtained from: https://vault.aristanetworks.com:8200/v1/anet/engprod/ssh/public_key
 
-Setup your local ssh daemon by copying the generated CA public key and telling
-sshd to trust it:
-
-```console
-$ sudo cp ca.pub /etc/ssh/ca.pub
-$ sudo chmod 600 /etc/ssh/ca.pub
-$ echo 'TrustedUserCAKeys /etc/ssh/ca.pub' | sudo tee -a /etc/ssh/sshd_config
+```bash
+$ curl  https://vault.aristanetworks.com:8200/v1/anet/engprod/ssh/public_key -o /etc/ssh/vault-ssh-ca-key.pem
+$ sudo chmod 644 /etc/ssh/vault-ssh-ca-key.pem
+$ echo 'TrustedUserCAKeys /etc/ssh/vault-ssh-ca-key.pem' | sudo tee -a /etc/ssh/sshd_config
 ```
 
-Start or restart sshd.
+Restart sshd `sudo systemctl restart sshd`
+
+------------------------------------------
+
+On the client side, this is your laptop. Update the local ssh config to use the custom agent socket and enable
+agent forwarding by default.
+
+```bash
+$ pwd                                                                      
+/Users/jsuarez/repos/ssh-agent-poc
+
+sudo vim sudo vim ~/.ssh/config
+```
+
+Add the following configuration:
+
+```
+Host *
+  ForwardAgent yes
+  IdentityAgent /Users/jsuarez/repos/ssh-agent-pocagent.sock
+```
+
+The above will use the config for all hosts, feel free to narrow it down.
+
+------------------------------------------
 
 To run the agent, simply execute the following command:
 
-```
+```bash
 $ go run .
 ```
 
-This will create a socket named agent.sock in the current directory.
+This will promp for your LDAP credentials and create a socket named `agent.sock`` in the current directory.
 
 In another terminal, try using the agent to connect to localhost:
 
 ```
-$ SSH_AUTH_SOCK=$(pwd)/agent.sock ssh localhost -vvv
+$ ssh abs104 -vvv
 ```
 
-If you did the setup correctly, you should now be logged in.
+If you did the setup correctly, you should now be logged in. If you forwarded the agent you can run `ssh-add -L` to
+verify that you are able to get new certs. From here try connecting to another host configured to use the CA.
+
+```bash
+~ @abs104.sjc> ssh bs337 whoami
+jsuarez
+```
+
+Try using et, scp, mosh (Does not support agent forwarding), pdsh or Ansible.
