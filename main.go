@@ -15,14 +15,14 @@ import (
 
 func main() {
 	user := os.Getenv("USER") // we should of course check the username from the UID
-
-	slog.Info("Getting initial vault token")
-	token, err := GetToken()
-	if err != nil {
-		slog.Error("Error getting token from the CA", "Error:", err)
-	}
-	slog.Info("Successfuly got vault token")
-	slog.Info("Starting Arista SSH Agent")
+	var token string
+	// slog.Info("Getting initial vault token")
+	// token, err := GetToken()
+	// if err != nil {
+	// 	slog.Error("Error getting token from the CA", "Error:", err)
+	// }
+	// slog.Info("Successfully got vault token")
+	// slog.Info("Starting Arista SSH Agent")
 
 	os.Remove("agent.sock")
 
@@ -50,12 +50,12 @@ func main() {
 				User: user,
 			}
 
-			cert, key, err := GenerateSignedCert(session.User, token)
+			cert, key, newtoken, err := GenerateSignedCert(session.User, token)
 			if err != nil {
 				slog.Error("GenerateSignedCert", "error", err)
 				return
 			}
-
+			token = newtoken
 			slog.Debug("generated session cert and key", "cert", cert, "key", key)
 
 			signer, err := ssh.NewSignerFromKey(key)

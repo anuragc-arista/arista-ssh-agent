@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,49 +18,6 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 )
-
-// func LoadCACert(pemfile, keyfile string) (*x509.Certificate, ed25519.PrivateKey, error) {
-
-// 	pembytes, err := os.ReadFile(pemfile)
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
-
-// 	pemdata, _ := pem.Decode(pembytes)
-// 	if pemdata == nil {
-// 		return nil, nil, fmt.Errorf("invalid pem file")
-// 	}
-
-// 	if pemdata.Type != "CERTIFICATE" {
-// 		return nil, nil, fmt.Errorf("invalid pem file")
-// 	}
-
-// 	cert, err := x509.ParseCertificate(pemdata.Bytes)
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
-
-// 	keybytes, err := os.ReadFile(keyfile)
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
-
-// 	keydata, _ := pem.Decode(keybytes)
-// 	if keydata == nil {
-// 		return nil, nil, fmt.Errorf("invalid key file")
-// 	}
-
-// 	if keydata.Type != "PRIVATE KEY" {
-// 		return nil, nil, fmt.Errorf("invalid key file")
-// 	}
-
-// 	key, err := x509.ParsePKCS8PrivateKey(keydata.Bytes)
-// 	if err != nil {
-// 		return nil, nil, err
-// 	}
-
-// 	return cert, key.(ed25519.PrivateKey), nil
-// }
 
 func GetCredentials() (string, string) {
 	reader := bufio.NewReader(os.Stdin)
@@ -116,7 +74,7 @@ func GetToken() (string, error) {
 	jsonData, _ := json.Marshal(data)
 	url := "https://vault.aristanetworks.com:8200/v1/auth/ldap/login/"
 	urlStr := fmt.Sprintf("%s%s", url, username)
-	req, err := http.NewRequest("PUT", urlStr, bytes.NewBuffer(jsonData)) // Remove hardcoded username
+	req, err := http.NewRequest("PUT", urlStr, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -133,8 +91,18 @@ func GetToken() (string, error) {
 		log.Fatal(err)
 	}
 
+	if resp.StatusCode != 200 {
+		slog.Error("Invalid token request",
+			"Status Code", resp.StatusCode,
+			"Body", bodyText,
+			"Error", err)
+		return "", errors.New("invalid token request")
+	} else {
+		slog.Info("Vault token obtained", "Status Code:", resp.StatusCode)
+	}
+
 	var result TokenInfo
-	if err := json.Unmarshal(bodyText, &result); err != nil { // Parse []byte to go struct pointer
+	if err := json.Unmarshal(bodyText, &result); err != nil {
 		slog.Error("Can not unmarshal JSON", err)
 	}
 
@@ -143,6 +111,7 @@ func GetToken() (string, error) {
 
 // https://developer.hashicorp.com/vault/api-docs/auth/token#renew-a-token
 func TokenRenew(token string) (string, error) {
+
 	type TokenRenewInfo struct {
 		RequestID     string `json:"request_id"`
 		LeaseID       string `json:"lease_id"`
@@ -172,7 +141,8 @@ func TokenRenew(token string) (string, error) {
 
 	client := &http.Client{}
 	var data = strings.NewReader(`{"increment":0}`)
-	req, err := http.NewRequest("PUT", "https://vault.aristanetworks.com:8200/v1/auth/token/renew-self", data)
+	url := "https://vault.aristanetworks.com:8200/v1/auth/token/renew-self"
+	req, err := http.NewRequest("PUT", url, data)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -189,8 +159,18 @@ func TokenRenew(token string) (string, error) {
 		log.Fatal(err)
 	}
 
+	if resp.StatusCode != 200 {
+		slog.Error("Token renewal rejected",
+			"Status Code", resp.StatusCode,
+			"Body", bodyText,
+			"Error", err)
+		return "", errors.New("invalid token")
+	} else {
+		slog.Info("Token renewal", "Status Code:", resp.StatusCode)
+	}
+
 	var result TokenRenewInfo
-	if err := json.Unmarshal(bodyText, &result); err != nil { // Parse []byte to go struct pointer
+	if err := json.Unmarshal(bodyText, &result); err != nil {
 		slog.Error("Can not unmarshal JSON", err)
 	}
 
@@ -236,7 +216,8 @@ func TokenLookup(token string) (int, error) {
 	}
 
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", "https://vault.aristanetworks.com:8200/v1/auth/token/lookup-self", nil)
+	url := "https://vault.aristanetworks.com:8200/v1/auth/token/lookup-self"
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -251,17 +232,26 @@ func TokenLookup(token string) (int, error) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// fmt.Printf("%s\n", bodyText)
+
+	if resp.StatusCode != 200 {
+		slog.Error("Token lookup rejected",
+			"Status Code", resp.StatusCode,
+			"Body", bodyText,
+			"Error", err)
+		return 0, errors.New("invalid token") // Returning a 0 is not a good idea?
+	} else {
+		slog.Info("Token lookup success", "status code", resp.StatusCode)
+	}
 
 	var result TokenLookupInfo
-	if err := json.Unmarshal(bodyText, &result); err != nil { // Parse []byte to go struct pointer
+	if err := json.Unmarshal(bodyText, &result); err != nil {
 		slog.Error("Can not unmarshal JSON", err)
 	}
 
 	return result.Data.TTL, err
 }
 
-func SignCert(sshpub ssh.PublicKey, token string) (string, error) {
+func SignCert(sshpub ssh.PublicKey, token string) (string, string, error) {
 
 	type SignCert struct {
 		RequestID     string `json:"request_id"`
@@ -277,40 +267,35 @@ func SignCert(sshpub ssh.PublicKey, token string) (string, error) {
 		Auth     any `json:"auth"`
 	}
 
-	tokenMemAddr := &token
-
-	// Here we check the existing token's ttl and renew if it has less that
-	// 300 sec left but more that 60 sec. We will attempt to renew before each
-	// request to sing the public key to obtain a certificate.
 	tokenttl, err := TokenLookup(token)
 	if err != nil {
-		slog.Error("Error looking up token info", "Error:", err)
+		slog.Error("Can not get token ttl", "Error:", err)
 	}
 
-	if tokenttl > 60 && tokenttl < 900 {
-		slog.Info("Token needs renewal", "TTL", tokenttl)
-		renewedtoken, err := TokenRenew(token)
+	if tokenttl < 300 {
+		slog.Info("Token needs renewal", "ttl", tokenttl)
+		token, err = TokenRenew(token)
 		if err != nil {
-			slog.Error("Error renewing token", "Error:", err)
-			fmt.Println("Start login flow")
-			newtoken, err := GetToken()
+			slog.Error("Can not renew token", "error:", err)
+			slog.Info("######## Start LDAP login flow ########")
+			token, err = GetToken()
 			if err != nil {
-				slog.Error("Error getting new token", "Error:", err)
+				slog.Error("Can not get new token", "error:", err)
 				os.Exit(1)
 			}
-			*tokenMemAddr = newtoken
-			slog.Info("New token successfully obtained!")
+			slog.Info("New token successfully obtained!",
+				"Token", token)
 		} else {
-			*tokenMemAddr = renewedtoken
-			slog.Info("Token successfully renewed!")
+			slog.Info("Token successfully renewed!",
+				"Token", token)
 		}
 	} else {
-		slog.Info("Token TLL is greater that 300 sec", "TTL", tokenttl)
+		slog.Info("Token does not need renewal", "ttl", tokenttl)
 	}
 
-	SshPub := string(ssh.MarshalAuthorizedKey(sshpub))
-	data := map[string]string{"public_key": SshPub}
+	data := map[string]string{"public_key": string(ssh.MarshalAuthorizedKey(sshpub))}
 	jsonData, _ := json.Marshal(data)
+
 	client := &http.Client{}
 	url := "https://vault.aristanetworks.com:8200/v1/ssh/sign/user"
 	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(jsonData))
@@ -328,47 +313,47 @@ func SignCert(sshpub ssh.PublicKey, token string) (string, error) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// fmt.Printf("%s\n", bodyText)
+
+	if resp.StatusCode != 200 {
+		slog.Error("Unable to sign public ssh key with CA",
+			"Status Code", resp.StatusCode,
+			"Body", bodyText,
+			"Error", err)
+		return "", "", errors.New("error signing public ssh key")
+	} else {
+		slog.Info("Signed ssh public key", "status code", resp.StatusCode)
+	}
 
 	var result SignCert
-	if err := json.Unmarshal(bodyText, &result); err != nil { // Parse []byte to go struct pointer
+	if err := json.Unmarshal(bodyText, &result); err != nil {
 		fmt.Println("Can not unmarshal JSON")
 	}
-	// fmt.Println(result.Data.SignedKey)
-	SignedKey := result.Data.SignedKey
-	return SignedKey, err
+
+	return result.Data.SignedKey, token, err
 }
 
-func GenerateSignedCert(username string, token string) (*ssh.Certificate, ed25519.PrivateKey, error) {
-
-	// casigner, err := ssh.NewSignerFromKey(cakey)
-	// if err != nil {
-	// 	return nil, nil, err
-	// }
+func GenerateSignedCert(username string, token string) (*ssh.Certificate, ed25519.PrivateKey, string, error) {
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	sshpub, err := ssh.NewPublicKey(pub)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
-	cert, err := SignCert(sshpub, token)
+	cert, newtoken, err := SignCert(sshpub, token)
 	if err != nil {
-		slog.Error("Error signing ssh certificate with the CA", "Error:", err)
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(cert))
 	if err != nil {
 		slog.Error("Error parsing ssh certificate", "Error:", err)
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
-	signedcert := pk.(*ssh.Certificate)
-
-	return signedcert, priv, nil
+	return pk.(*ssh.Certificate), priv, newtoken, nil
 }
