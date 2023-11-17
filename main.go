@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/binary"
+	"errors"
+	"flag"
 	"io"
 	"log/slog"
 	"net"
@@ -15,14 +17,23 @@ import (
 
 func main() {
 	user := os.Getenv("USER") // we should of course check the username from the UID
-	var token string
-	// slog.Info("Getting initial vault token")
-	// token, err := GetToken()
-	// if err != nil {
-	// 	slog.Error("Error getting token from the CA", "Error:", err)
-	// }
-	// slog.Info("Successfully got vault token")
-	// slog.Info("Starting Arista SSH Agent")
+	// var token string
+	// var role string
+
+	var provisioner string
+	flag.StringVar(&provisioner, "p", "google", "Default provisioner: google")
+	flag.Parse()
+
+	token, role, err := login(provisioner)
+	if err != nil {
+		slog.Error("Can not complete login flow", "error:", err)
+		os.Exit(1)
+	}
+
+	slog.Info("Vault role", "role", role)
+	slog.Info("Starting Arista SSH Agent")
+
+	// token = loginOidc()
 
 	os.Remove("agent.sock")
 
@@ -50,7 +61,7 @@ func main() {
 				User: user,
 			}
 
-			cert, key, newtoken, err := GenerateSignedCert(session.User, token)
+			cert, key, newtoken, err := GenerateSignedCert(session.User, token, provisioner, role)
 			if err != nil {
 				slog.Error("GenerateSignedCert", "error", err)
 				return
@@ -138,4 +149,21 @@ func handle(conn net.Conn, session *Session) error {
 			return err
 		}
 	}
+}
+
+func login(provisioner string) (token string, role string, err error) {
+	slog.Info("Provisioner", "P", provisioner)
+	switch provisioner {
+	case "google":
+		token, err := loginOidc()
+		role = "user-google"
+		return token, role, err
+	case "ldap":
+		token, err := loginLdap()
+		role = "user"
+		return token, role, err
+	default:
+		slog.Error("unsupported provisioner, options are -p google and -p ldap")
+	}
+	return "", "", errors.New("unsupported provisioner")
 }
