@@ -37,7 +37,7 @@ func GetCredentials() (string, string) {
 }
 
 // https://developer.hashicorp.com/vault/api-docs/auth/ldap#login-with-ldap-user
-func GetToken() (string, error) {
+func loginLdap() (string, error) {
 
 	type TokenInfo struct {
 		RequestID     string `json:"request_id"`
@@ -251,7 +251,7 @@ func TokenLookup(token string) (int, error) {
 	return result.Data.TTL, err
 }
 
-func SignCert(sshpub ssh.PublicKey, token string) (string, string, error) {
+func SignCert(sshpub ssh.PublicKey, token string, provisioner string, role string) (string, string, error) {
 
 	type SignCert struct {
 		RequestID     string `json:"request_id"`
@@ -267,20 +267,22 @@ func SignCert(sshpub ssh.PublicKey, token string) (string, string, error) {
 		Auth     any `json:"auth"`
 	}
 
+	// slog.Info("Initial token", "TOKEN", token)
 	tokenttl, err := TokenLookup(token)
 	if err != nil {
 		slog.Error("Can not get token ttl", "Error:", err)
 	}
 
-	if tokenttl < 300 {
+	if tokenttl < 3000 {
 		slog.Info("Token needs renewal", "ttl", tokenttl)
 		token, err = TokenRenew(token)
 		if err != nil {
 			slog.Error("Can not renew token", "error:", err)
-			slog.Info("######## Start LDAP login flow ########")
-			token, err = GetToken()
+			// This needs to support OIDC
+			slog.Info("######## Start new login flow ########")
+			token, _, err = login(provisioner)
 			if err != nil {
-				slog.Error("Can not get new token", "error:", err)
+				slog.Error("Can not complete login flow", "error:", err)
 				os.Exit(1)
 			}
 			slog.Info("New token successfully obtained!",
@@ -297,7 +299,8 @@ func SignCert(sshpub ssh.PublicKey, token string) (string, string, error) {
 	jsonData, _ := json.Marshal(data)
 
 	client := &http.Client{}
-	url := "https://vault.aristanetworks.com:8200/v1/ssh/sign/user"
+
+	url := fmt.Sprintf("https://vault.aristanetworks.com:8200/v1/ssh/sign/%s", role)
 	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Fatal(err)
@@ -332,7 +335,7 @@ func SignCert(sshpub ssh.PublicKey, token string) (string, string, error) {
 	return result.Data.SignedKey, token, err
 }
 
-func GenerateSignedCert(username string, token string) (*ssh.Certificate, ed25519.PrivateKey, string, error) {
+func GenerateSignedCert(username string, token string, provisioner string, role string) (*ssh.Certificate, ed25519.PrivateKey, string, error) {
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -344,7 +347,7 @@ func GenerateSignedCert(username string, token string) (*ssh.Certificate, ed2551
 		return nil, nil, "", err
 	}
 
-	cert, newtoken, err := SignCert(sshpub, token)
+	cert, newtoken, err := SignCert(sshpub, token, provisioner, role)
 	if err != nil {
 		return nil, nil, "", err
 	}
