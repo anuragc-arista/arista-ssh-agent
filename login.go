@@ -17,8 +17,6 @@ import (
 	"github.com/hashicorp/vault-client-go/schema"
 )
 
-var token string
-
 const (
 	vaultAddress = "https://vault.aristanetworks.com:8200"
 	redirectUri  = "http://localhost:8250/oidc/callback"
@@ -43,7 +41,8 @@ func initVaultClient() *vault.Client {
 	return client
 }
 
-func loginOidc() (clientToken string, err error) {
+func loginOidc(vaultConfig *Vault) error {
+
 	cl := initVaultClient()
 
 	authorizationURL, err := cl.Auth.JwtOidcRequestAuthorizationUrl(
@@ -52,7 +51,7 @@ func loginOidc() (clientToken string, err error) {
 			RedirectUri: redirectUri,
 			Role:        defaultRole,
 		},
-		vault.WithMountPath(defaultMounthPath),
+		vault.WithMountPath(vaultConfig.MountPath),
 		vault.WithNamespace(defaultNameSpace),
 	)
 
@@ -62,14 +61,14 @@ func loginOidc() (clientToken string, err error) {
 	}
 	authUrl := fmt.Sprintf("%s", authorizationURL.Data["auth_url"])
 
-	clienToken, err := authorizeUser(redirectUri, authUrl)
+	err = authorizeUser(redirectUri, authUrl, vaultConfig)
 	if err != nil {
-		return "", err
+		return err
 	}
-	return clienToken, nil
+	return nil
 }
 
-func codeHandler(server *http.Server, authorizationURL string) http.Handler {
+func codeHandler(server *http.Server, authorizationURL string, vaultConfig *Vault) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		// get the authorization code
 		code := r.URL.Query().Get("code")
@@ -82,7 +81,7 @@ func codeHandler(server *http.Server, authorizationURL string) http.Handler {
 		}
 
 		// trade the authorization code for a vault client token
-		clientToken, err := getClientToken(authorizationURL, code)
+		err := getClientToken(authorizationURL, code, vaultConfig)
 		if err != nil {
 			slog.Error("Error getting vault client token", "error:", err)
 			io.WriteString(w, "Error: could not retrieve vault token\n")
@@ -90,7 +89,6 @@ func codeHandler(server *http.Server, authorizationURL string) http.Handler {
 			cleanup(server)
 			return
 		}
-		token = clientToken
 
 		// return an indication of success to the caller
 		io.WriteString(w, `
@@ -109,19 +107,19 @@ func codeHandler(server *http.Server, authorizationURL string) http.Handler {
 }
 
 // AuthorizeUser implements the Vault OIDC OAuth2 flow.
-func authorizeUser(redirectUri string, authorizationURL string) (clientToken string, err error) {
+func authorizeUser(redirectUri string, authorizationURL string, vaultConfig *Vault) error {
 	// start a web server to listen on a callback URL
 	mux := http.NewServeMux()
 	server := &http.Server{Addr: redirectUri, Handler: mux}
 
 	// define a handler that will get the authorization code, call the token endpoint, and close the HTTP server
-	mux.Handle("/oidc/callback", codeHandler(server, authorizationURL))
+	mux.Handle("/oidc/callback", codeHandler(server, authorizationURL, vaultConfig))
 
 	// parse the redirect URL for the port number
 	u, err := url.Parse(redirectUri)
 	if err != nil {
 		slog.Error("Bad redirect URL", "error", err)
-		return "", err
+		return err
 	}
 
 	// set up a listener on the redirect port
@@ -129,7 +127,7 @@ func authorizeUser(redirectUri string, authorizationURL string) (clientToken str
 	l, err := net.Listen("tcp", port)
 	if err != nil {
 		slog.Error("Can't listen on redirect port", "port", port, "error", err)
-		return "", err
+		return err
 	}
 
 	// open a browser window to the authorizationURL
@@ -137,7 +135,7 @@ func authorizeUser(redirectUri string, authorizationURL string) (clientToken str
 	err = util.OpenURL(authorizationURL)
 	if err != nil {
 		slog.Error("Can't open browser", "URL", authorizationURL, "error", err)
-		return "", err
+		return err
 	}
 	slog.Info("Waiting for OIDC authentication to complete...")
 
@@ -145,42 +143,38 @@ func authorizeUser(redirectUri string, authorizationURL string) (clientToken str
 	// this will exit when the handler gets fired and calls server.Close()
 	server.Serve(l)
 
-	return token, nil
+	return nil
 }
 
 // getIdToken trades the authorization code retrieved from the first OAuth2 leg for an ID token
-func getClientToken(authorizationURL string, code string) (clientToken string, err error) {
+func getClientToken(authorizationURL string, code string, vaultConfig *Vault) error {
 	cl := initVaultClient()
 
 	parsedUrl, err := url.Parse(authorizationURL)
 	if err != nil {
 		slog.Error("Error parsing auth_url", "error:", err)
-		return "", err
+		return err
 	}
 	nonce := parsedUrl.Query().Get("nonce")
 	state := parsedUrl.Query().Get("state")
-
-	// slog.Info("URL", "Nonce", nonce)
-	// slog.Info("URL", "State", state)
-	// slog.Info("Authorization Code", "CODE", code)
 
 	authRsp, err := cl.Auth.JwtOidcCallback(
 		context.Background(),
 		nonce,
 		code,
 		state,
-		vault.WithMountPath(defaultMounthPath),
+		vault.WithMountPath(vaultConfig.MountPath),
 		vault.WithNamespace(defaultNameSpace),
 	)
 
 	if err != nil {
 		slog.Error("Error exchanging authorization code for Client Token", "error:", err)
 		// close the HTTP server and return
-		return "", err
+		return err
 	}
+	vaultConfig.Token = &authRsp.Auth.ClientToken
 
-	// slog.Info("Vault Token", "TOKEN", authRsp.Auth.ClientToken)
-	return authRsp.Auth.ClientToken, nil
+	return nil
 }
 
 // cleanup closes the HTTP server
