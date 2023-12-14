@@ -16,24 +16,34 @@ import (
 )
 
 func main() {
-	user := os.Getenv("USER") // we should of course check the username from the UID
-	// var token string
-	// var role string
 
-	var provisioner string
+	var (
+		provisioner string
+		user        string
+	)
+
+	user = os.Getenv("USER") // we should of course check the username from the UID
+
 	flag.StringVar(&provisioner, "p", "google", "Default provisioner: google")
 	flag.Parse()
 
-	token, role, err := login(provisioner)
+	vaultConfig := Vault{
+		Provisioner: provisioner,
+	}
+
+	err := getVaultConfig(&vaultConfig)
+	if err != nil {
+		slog.Error("Can not complete vault config", "error:", err)
+		os.Exit(1)
+	}
+
+	err = login(&vaultConfig)
 	if err != nil {
 		slog.Error("Can not complete login flow", "error:", err)
 		os.Exit(1)
 	}
 
-	slog.Info("Vault role", "role", role)
 	slog.Info("Starting Arista SSH Agent")
-
-	// token = loginOidc()
 
 	os.Remove("agent.sock")
 
@@ -61,12 +71,11 @@ func main() {
 				User: user,
 			}
 
-			cert, key, newtoken, err := GenerateSignedCert(session.User, token, provisioner, role)
+			cert, key, err := GenerateSignedCert(session.User, &vaultConfig)
 			if err != nil {
 				slog.Error("GenerateSignedCert", "error", err)
 				return
 			}
-			token = newtoken
 			slog.Debug("generated session cert and key", "cert", cert, "key", key)
 
 			signer, err := ssh.NewSignerFromKey(key)
@@ -151,19 +160,47 @@ func handle(conn net.Conn, session *Session) error {
 	}
 }
 
-func login(provisioner string) (token string, role string, err error) {
-	slog.Info("Provisioner", "P", provisioner)
-	switch provisioner {
-	case "google":
-		token, err := loginOidc()
-		role = "user-google"
-		return token, role, err
+func login(vaultConfig *Vault) (err error) {
+
+	slog.Info("######## Start new login flow ########")
+
+	switch vaultConfig.Provisioner {
+
 	case "ldap":
-		token, err := loginLdap()
-		role = "user"
-		return token, role, err
-	default:
-		slog.Error("unsupported provisioner, options are -p google and -p ldap")
+		err = loginLdap(vaultConfig)
+	case "google", "onelogin":
+		err = loginOidc(vaultConfig)
 	}
-	return "", "", errors.New("unsupported provisioner")
+
+	return err
+}
+
+type Vault struct {
+	Role         string
+	MountPath    string
+	Provisioner  string
+	Token        *string
+	SecretEngine string
+}
+
+func getVaultConfig(vaultConfig *Vault) error {
+
+	switch vaultConfig.Provisioner {
+	case "google":
+		vaultConfig.MountPath = "google"
+		vaultConfig.Role = "user-google"
+		vaultConfig.SecretEngine = "ssh"
+	case "onelogin":
+		vaultConfig.MountPath = "ol-mfa"
+		vaultConfig.Role = "user"
+		vaultConfig.SecretEngine = "ssh-ol"
+	case "ldap":
+		vaultConfig.MountPath = "ldap"
+		vaultConfig.Role = "user"
+		vaultConfig.SecretEngine = "ssh"
+	default:
+		return errors.New("unsupported provisioner, options are google, onelogin and ldap")
+	}
+
+	return nil
 }

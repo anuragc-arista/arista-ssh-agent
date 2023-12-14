@@ -37,7 +37,7 @@ func GetCredentials() (string, string) {
 }
 
 // https://developer.hashicorp.com/vault/api-docs/auth/ldap#login-with-ldap-user
-func loginLdap() (string, error) {
+func loginLdap(vaultConfig *Vault) error {
 
 	type TokenInfo struct {
 		RequestID     string `json:"request_id"`
@@ -96,7 +96,7 @@ func loginLdap() (string, error) {
 			"Status Code", resp.StatusCode,
 			"Body", bodyText,
 			"Error", err)
-		return "", errors.New("invalid token request")
+		return errors.New("invalid token request")
 	} else {
 		slog.Info("Vault token obtained", "Status Code:", resp.StatusCode)
 	}
@@ -105,12 +105,13 @@ func loginLdap() (string, error) {
 	if err := json.Unmarshal(bodyText, &result); err != nil {
 		slog.Error("Can not unmarshal JSON", err)
 	}
+	vaultConfig.Token = &result.Auth.ClientToken
 
-	return result.Auth.ClientToken, err
+	return err
 }
 
 // https://developer.hashicorp.com/vault/api-docs/auth/token#renew-a-token
-func TokenRenew(token string) (string, error) {
+func TokenRenew(vaultConfig *Vault) error {
 
 	type TokenRenewInfo struct {
 		RequestID     string `json:"request_id"`
@@ -146,7 +147,7 @@ func TokenRenew(token string) (string, error) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	req.Header.Set("X-Vault-Token", token)
+	req.Header.Set("X-Vault-Token", *vaultConfig.Token)
 	req.Header.Set("X-Vault-Request", "true")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := client.Do(req)
@@ -164,7 +165,7 @@ func TokenRenew(token string) (string, error) {
 			"Status Code", resp.StatusCode,
 			"Body", bodyText,
 			"Error", err)
-		return "", errors.New("invalid token")
+		return errors.New("invalid token")
 	} else {
 		slog.Info("Token renewal", "Status Code:", resp.StatusCode)
 	}
@@ -173,12 +174,13 @@ func TokenRenew(token string) (string, error) {
 	if err := json.Unmarshal(bodyText, &result); err != nil {
 		slog.Error("Can not unmarshal JSON", err)
 	}
+	vaultConfig.Token = &result.Auth.ClientToken
 
-	return result.Auth.ClientToken, err
+	return err
 }
 
 // https://developer.hashicorp.com/vault/api-docs/auth/token#lookup-a-token-self
-func TokenLookup(token string) (int, error) {
+func TokenLookup(token *string) (int, error) {
 
 	type TokenLookupInfo struct {
 		RequestID     string `json:"request_id"`
@@ -222,7 +224,7 @@ func TokenLookup(token string) (int, error) {
 		log.Fatal(err)
 	}
 	req.Header.Set("X-Vault-Request", "true")
-	req.Header.Set("X-Vault-Token", token)
+	req.Header.Set("X-Vault-Token", *token)
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatal(err)
@@ -251,7 +253,7 @@ func TokenLookup(token string) (int, error) {
 	return result.Data.TTL, err
 }
 
-func SignCert(sshpub ssh.PublicKey, token string, provisioner string, role string) (string, string, error) {
+func SignCert(sshpub ssh.PublicKey, vaultConfig *Vault) (SignedKey string, err error) {
 
 	type SignCert struct {
 		RequestID     string `json:"request_id"`
@@ -267,29 +269,24 @@ func SignCert(sshpub ssh.PublicKey, token string, provisioner string, role strin
 		Auth     any `json:"auth"`
 	}
 
-	// slog.Info("Initial token", "TOKEN", token)
-	tokenttl, err := TokenLookup(token)
+	tokenttl, err := TokenLookup(vaultConfig.Token)
 	if err != nil {
 		slog.Error("Can not get token ttl", "Error:", err)
 	}
 
 	if tokenttl < 3000 {
 		slog.Info("Token needs renewal", "ttl", tokenttl)
-		token, err = TokenRenew(token)
+		err = TokenRenew(vaultConfig)
 		if err != nil {
 			slog.Error("Can not renew token", "error:", err)
-			// This needs to support OIDC
-			slog.Info("######## Start new login flow ########")
-			token, _, err = login(provisioner)
+			err = login(vaultConfig)
 			if err != nil {
 				slog.Error("Can not complete login flow", "error:", err)
 				os.Exit(1)
 			}
-			slog.Info("New token successfully obtained!",
-				"Token", token)
+			slog.Info("New token successfully obtained!", "Token", *vaultConfig.Token)
 		} else {
-			slog.Info("Token successfully renewed!",
-				"Token", token)
+			slog.Info("Token successfully renewed!", "token", *vaultConfig.Token)
 		}
 	} else {
 		slog.Info("Token does not need renewal", "ttl", tokenttl)
@@ -300,13 +297,16 @@ func SignCert(sshpub ssh.PublicKey, token string, provisioner string, role strin
 
 	client := &http.Client{}
 
-	url := fmt.Sprintf("https://vault.aristanetworks.com:8200/v1/ssh/sign/%s", role)
+	url := fmt.Sprintf(
+		"https://vault.aristanetworks.com:8200/v1/%s/sign/%s",
+		vaultConfig.SecretEngine,
+		vaultConfig.Role)
 	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Fatal(err)
 	}
 	req.Header.Set("X-Vault-Namespace", "anet/engprod/")
-	req.Header.Set("X-Vault-Token", token)
+	req.Header.Set("X-Vault-Token", *vaultConfig.Token)
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatal(err)
@@ -322,7 +322,7 @@ func SignCert(sshpub ssh.PublicKey, token string, provisioner string, role strin
 			"Status Code", resp.StatusCode,
 			"Body", bodyText,
 			"Error", err)
-		return "", "", errors.New("error signing public ssh key")
+		return "", errors.New("error signing public ssh key")
 	} else {
 		slog.Info("Signed ssh public key", "status code", resp.StatusCode)
 	}
@@ -331,32 +331,33 @@ func SignCert(sshpub ssh.PublicKey, token string, provisioner string, role strin
 	if err := json.Unmarshal(bodyText, &result); err != nil {
 		fmt.Println("Can not unmarshal JSON")
 	}
+	slog.Info("ssh certificate", "key", result.Data.SignedKey)
 
-	return result.Data.SignedKey, token, err
+	return result.Data.SignedKey, err
 }
 
-func GenerateSignedCert(username string, token string, provisioner string, role string) (*ssh.Certificate, ed25519.PrivateKey, string, error) {
+func GenerateSignedCert(username string, vaultConfig *Vault) (*ssh.Certificate, ed25519.PrivateKey, error) {
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 
 	sshpub, err := ssh.NewPublicKey(pub)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 
-	cert, newtoken, err := SignCert(sshpub, token, provisioner, role)
+	cert, err := SignCert(sshpub, vaultConfig)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 
 	pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(cert))
 	if err != nil {
 		slog.Error("Error parsing ssh certificate", "Error:", err)
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 
-	return pk.(*ssh.Certificate), priv, newtoken, nil
+	return pk.(*ssh.Certificate), priv, nil
 }
