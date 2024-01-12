@@ -110,7 +110,10 @@ func codeHandler(server *http.Server, authorizationURL string, vaultConfig *Vaul
 func authorizeUser(redirectUri string, authorizationURL string, vaultConfig *Vault) error {
 	// start a web server to listen on a callback URL
 	mux := http.NewServeMux()
-	server := &http.Server{Addr: redirectUri, Handler: mux}
+	server := &http.Server{
+		Addr:    redirectUri,
+		Handler: mux,
+	}
 
 	// define a handler that will get the authorization code, call the token endpoint, and close the HTTP server
 	mux.Handle("/oidc/callback", codeHandler(server, authorizationURL, vaultConfig))
