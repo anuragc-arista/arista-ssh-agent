@@ -240,7 +240,7 @@ func TokenLookup(token *string) (int, error) {
 			"Status Code", resp.StatusCode,
 			"Body", bodyText,
 			"Error", err)
-		return 0, errors.New("invalid token") // Returning a 0 is not a good idea?
+		return 0, errors.New("invalid token")
 	} else {
 		slog.Info("Token lookup success", "status code", resp.StatusCode)
 	}
@@ -274,7 +274,7 @@ func SignCert(sshpub ssh.PublicKey, vaultConfig *Vault) (SignedKey string, err e
 		slog.Error("Can not get token ttl", "Error:", err)
 	}
 
-	if tokenttl < 3000 {
+	if tokenttl < 3000 || canConnectToPort() {
 		slog.Info("Token needs renewal", "ttl", tokenttl)
 		err = TokenRenew(vaultConfig)
 		if err != nil {

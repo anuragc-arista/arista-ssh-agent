@@ -204,3 +204,14 @@ func getVaultConfig(vaultConfig *Vault) error {
 
 	return nil
 }
+
+func canConnectToPort() bool {
+
+	server, err := net.Listen("tcp", ":8250")
+	if err != nil {
+		return true
+	}
+
+	defer server.Close()
+	return false
+}
